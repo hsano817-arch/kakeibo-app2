@@ -433,6 +433,10 @@
       <div><label for="fAmount">金額</label><input type="number" id="fAmount" min="0" step="0.01" placeholder="0"></div>
       <div><label for="fCurrency">通貨</label><select id="fCurrency"></select></div>
     </div>
+    <div class="field" id="currencyOtherField" style="display:none;">
+      <label for="fCurrencyOther">通貨名（自由入力）</label>
+      <input type="text" id="fCurrencyOther" placeholder="例：タイバーツ">
+    </div>
     <div class="field" id="rateField" style="display:none;">
       <label for="fRate">換算レート（NT$1 = 何通貨か）</label>
       <input type="number" id="fRate" min="0" step="0.0001" placeholder="例：4.5">
@@ -445,6 +449,10 @@
     <div class="field">
       <label for="fStore">店名</label>
       <select id="fStore"></select>
+    </div>
+    <div class="field" id="storeOtherField" style="display:none;">
+      <label for="fStoreOther">店名（自由入力）</label>
+      <input type="text" id="fStoreOther" placeholder="例：家樂福">
     </div>
     <div class="field row2">
       <div><label for="fPayment">支払方法</label><select id="fPayment"></select></div>
@@ -504,6 +512,7 @@
   const SETTINGS_KEY = 'settings';
   const ACTIVE_PROFILE_KEY = 'activeProfile';
   const BASE_CODE = 'TWD';
+  const OTHER_VALUE = '__other__';
 
   const DEFAULT_SETTINGS = {
     categories: {
@@ -810,6 +819,10 @@
   const rateField = document.getElementById('rateField');
   const rateConverted = document.getElementById('rateConverted');
   const fStore = document.getElementById('fStore');
+  const fStoreOther = document.getElementById('fStoreOther');
+  const storeOtherField = document.getElementById('storeOtherField');
+  const fCurrencyOther = document.getElementById('fCurrencyOther');
+  const currencyOtherField = document.getElementById('currencyOtherField');
   const fPayment = document.getElementById('fPayment');
   const fAccount = document.getElementById('fAccount');
   const fMemo = document.getElementById('fMemo');
@@ -830,15 +843,30 @@
     const blank = document.createElement('option');
     blank.value = ''; blank.textContent = '（未選択）';
     fStore.appendChild(blank);
+    const isKnownOrBlank = !selected || settings.stores.includes(selected);
     const list = settings.stores.slice();
-    if(selected && !list.includes(selected)) list.unshift(selected);
     list.forEach(v => {
       const opt = document.createElement('option');
       opt.value = v; opt.textContent = v;
       if(v === selected) opt.selected = true;
       fStore.appendChild(opt);
     });
-    if(!selected) fStore.value = '';
+    const otherOpt = document.createElement('option');
+    otherOpt.value = OTHER_VALUE; otherOpt.textContent = 'その他（自由入力）';
+    fStore.appendChild(otherOpt);
+
+    if(!isKnownOrBlank){
+      fStore.value = OTHER_VALUE;
+      fStoreOther.value = selected;
+    } else {
+      fStore.value = selected || '';
+      fStoreOther.value = '';
+    }
+    refreshStoreOtherVisibility();
+  }
+
+  function refreshStoreOtherVisibility(){
+    storeOtherField.style.display = (fStore.value === OTHER_VALUE) ? 'block' : 'none';
   }
 
   function populateCurrencySelect(selectedCode){
@@ -849,11 +877,28 @@
       if(c.code === selectedCode) opt.selected = true;
       fCurrency.appendChild(opt);
     });
+    const otherOpt = document.createElement('option');
+    otherOpt.value = OTHER_VALUE; otherOpt.textContent = 'その他（自由入力）';
+    fCurrency.appendChild(otherOpt);
+
+    const isKnown = settings.currencies.some(c => c.code === selectedCode);
+    if(selectedCode && !isKnown){
+      fCurrency.value = OTHER_VALUE;
+      fCurrencyOther.value = selectedCode;
+    } else {
+      fCurrencyOther.value = '';
+    }
+    refreshCurrencyOtherVisibility();
+  }
+
+  function refreshCurrencyOtherVisibility(){
+    currencyOtherField.style.display = (fCurrency.value === OTHER_VALUE) ? 'block' : 'none';
   }
 
   function refreshRateFieldVisibility(){
     const isBase = fCurrency.value === BASE_CODE;
     rateField.style.display = isBase ? 'none' : 'block';
+    refreshCurrencyOtherVisibility();
     updateRateConverted();
   }
 
@@ -904,12 +949,32 @@
   document.getElementById('cancelBtn').addEventListener('click', closeModal);
   overlay.addEventListener('click', (e) => { if(e.target === overlay) closeModal(); });
   fCurrency.addEventListener('change', refreshRateFieldVisibility);
+  fStore.addEventListener('change', refreshStoreOtherVisibility);
   fAmount.addEventListener('input', updateRateConverted);
   fRate.addEventListener('input', updateRateConverted);
 
   document.getElementById('saveBtn').addEventListener('click', async () => {
     const amount = parseFloat(fAmount.value);
-    const currency = fCurrency.value;
+
+    // resolve "その他" (free text) selections for currency and store
+    let currency = fCurrency.value;
+    if(currency === OTHER_VALUE){
+      currency = fCurrencyOther.value.trim().toUpperCase();
+      if(!currency){ fCurrencyOther.focus(); return; }
+      if(!settings.currencies.some(c => c.code === currency)){
+        settings.currencies.push({code: currency, symbol: currency});
+        await saveSettings();
+      }
+    }
+    let store = fStore.value;
+    if(store === OTHER_VALUE){
+      store = fStoreOther.value.trim();
+      if(store && !settings.stores.includes(store)){
+        settings.stores.push(store);
+        await saveSettings();
+      }
+    }
+
     const rate = currency === BASE_CODE ? 1 : parseFloat(fRate.value);
     if(!fDate.value || !amount || amount <= 0 || !rate || rate <= 0){
       (currency !== BASE_CODE && (!rate || rate<=0)) ? fRate.focus() : fAmount.focus();
@@ -923,7 +988,7 @@
       currency: currency,
       rate: rate,
       amountBase: currency === BASE_CODE ? amount : amount / rate,
-      store: fStore.value,
+      store: store,
       paymentMethod: fPayment.value || '',
       account: fAccount.value || '',
       memo: fMemo.value.trim(),
