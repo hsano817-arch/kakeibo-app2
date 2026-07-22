@@ -489,11 +489,16 @@
 
     <div class="io-section">
       <div class="shelf-title" style="margin-bottom:8px;">Excelへの書き出し / 読み込み</div>
+      <div class="io-note" id="lastBackupDisplay" style="margin-top:0; margin-bottom:10px;"></div>
+      <div class="field row2">
+        <div><label for="exportFromDate">書き出す範囲（任意・から）</label><input type="date" id="exportFromDate"></div>
+        <div><label for="exportToDate">まで</label><input type="date" id="exportToDate"></div>
+      </div>
       <div class="io-buttons">
         <button class="io-btn" id="exportBtn">📤 Excelに書き出す</button>
         <button class="io-btn" id="importBtn">📥 Excelから読み込む</button>
       </div>
-      <div class="io-note">読み込みは既存のデータに追加されます（すでに全く同じ内容の記録は追加されず、新しい記録だけが追加されます。項目・通貨・店名・使用者は重複しないものだけ追加）。書き出したファイルをそのまま編集して読み込み直せます。項目名の「変更」は反映されず新しい項目として追加されるので、既存項目の名前を変えたいときは⚙設定画面で直接編集してください。記録の収入／支出は「項目」の名前が収入項目・支出項目のどちらに登録されているかで自動判定されます（未登録の項目名は支出として扱われます）。「入力者」列が空欄、または登録されていない使用者名の場合は、現在表示中の使用者の記録として取り込まれます。</div>
+      <div class="io-note">範囲を指定しない場合は、すべての記録を書き出します。読み込みは既存のデータに追加されます（すでに全く同じ内容の記録は追加されず、新しい記録だけが追加されます。項目・通貨・店名・使用者は重複しないものだけ追加）。書き出したファイルをそのまま編集して読み込み直せます。項目名の「変更」は反映されず新しい項目として追加されるので、既存項目の名前を変えたいときは⚙設定画面で直接編集してください。記録の収入／支出は「項目」の名前が収入項目・支出項目のどちらに登録されているかで自動判定されます（未登録の項目名は支出として扱われます）。「入力者」列が空欄、または登録されていない使用者名の場合は、現在表示中の使用者の記録として取り込まれます。</div>
       <div class="io-note" id="ioStatus" style="font-weight:700;"></div>
       <input type="file" id="importFile" accept=".xlsx,.xls" style="display:none;">
     </div>
@@ -1021,7 +1026,7 @@
 
   // ---------- Settings modal ----------
   const settingsOverlay = document.getElementById('settingsOverlay');
-  document.getElementById('gearBtn').addEventListener('click', () => { renderSettingsPanes(); settingsOverlay.classList.add('show'); });
+  document.getElementById('gearBtn').addEventListener('click', () => { renderSettingsPanes(); renderLastBackupDisplay(); settingsOverlay.classList.add('show'); });
   document.getElementById('closeSettings').addEventListener('click', closeSettingsModal);
   document.getElementById('closeSettings2').addEventListener('click', closeSettingsModal);
   settingsOverlay.addEventListener('click', (e) => { if(e.target === settingsOverlay) closeSettingsModal(); });
@@ -1210,9 +1215,22 @@
       setIoStatus('Excelライブラリの読み込みに失敗しました。インターネット接続を確認し、ページを再読み込みしてください。', true);
       return;
     }
+    const fromDate = document.getElementById('exportFromDate').value;
+    const toDate = document.getElementById('exportToDate').value;
+    if(fromDate && toDate && fromDate > toDate){
+      setIoStatus('「から」の日付が「まで」より後になっています。範囲を確認してください。', true);
+      return;
+    }
+
     const wb = XLSX.utils.book_new();
 
-    const entryRows = entries.slice().sort((a,b)=>a.date.localeCompare(b.date) || a.id-b.id).map(e => ({
+    const filteredEntries = entries.filter(e => {
+      if(fromDate && e.date < fromDate) return false;
+      if(toDate && e.date > toDate) return false;
+      return true;
+    });
+
+    const entryRows = filteredEntries.slice().sort((a,b)=>a.date.localeCompare(b.date) || a.id-b.id).map(e => ({
       '日付': e.date,
       '入力者': e.owner || '',
       '項目': e.category,
@@ -1250,8 +1268,27 @@
     const wsProfile = XLSX.utils.json_to_sheet(settings.profiles.map(v => ({'使用者名': v})));
     XLSX.utils.book_append_sheet(wb, wsProfile, '使用者');
 
-    const stamp = todayStr().replace(/-/g,'');
-    XLSX.writeFile(wb, `家計簿_${stamp}.xlsx`);
+    const rangeLabel = (fromDate || toDate)
+      ? `${(fromDate || '先頭').replace(/-/g,'')}-${(toDate || '末尾').replace(/-/g,'')}`
+      : todayStr().replace(/-/g,'');
+    XLSX.writeFile(wb, `家計簿_${rangeLabel}.xlsx`);
+
+    settings.lastBackupAt = new Date().toISOString();
+    saveSettings();
+    renderLastBackupDisplay();
+    setIoStatus(`書き出しが完了しました（${filteredEntries.length}件の記録）。`, false);
+  }
+
+  function renderLastBackupDisplay(){
+    const el = document.getElementById('lastBackupDisplay');
+    if(!el) return;
+    if(!settings.lastBackupAt){
+      el.textContent = 'まだExcelへの書き出しをしていません。';
+      return;
+    }
+    const d = new Date(settings.lastBackupAt);
+    const label = `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日 ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    el.textContent = `最終バックアップ：${label}`;
   }
 
   function importSimpleColumn(sheet, colName, listRef){
