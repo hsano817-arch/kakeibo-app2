@@ -175,6 +175,13 @@
   }
   table{ width:100%; border-collapse:collapse; font-size:13px; }
   .ledger-table{ width:860px; table-layout:fixed; }
+  .ledger-table td:first-child, .ledger-table th:first-child{
+    position:sticky;
+    left:0;
+    z-index:5;
+    background:var(--card);
+    box-shadow: 2px 0 5px rgba(34,49,79,0.08);
+  }
   thead th{
     text-align:left; font-weight:500; color:var(--ink-soft); font-size:11px;
     letter-spacing:0.08em; padding:8px 10px; border-bottom:1px solid var(--line); white-space:nowrap;
@@ -182,6 +189,7 @@
   }
   tbody td{ padding:9px 10px; border-bottom:1px dashed var(--line-soft); white-space:nowrap; vertical-align:middle; overflow:hidden; text-overflow:ellipsis; }
   tbody tr.entry-row:hover{ background: rgba(34,49,79,0.03); }
+  tbody tr.entry-row:hover td:first-child{ background: #f6f2e8; }
   td.date{ color:var(--ink-soft); font-size:12.5px; width:52px; }
   td.cat{ min-width:76px; }
   td.store{ color:var(--ink-soft); max-width:120px; overflow:hidden; text-overflow:ellipsis; }
