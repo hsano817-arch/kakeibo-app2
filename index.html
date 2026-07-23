@@ -174,7 +174,7 @@
     .table-scroll{ max-height: 480px; }
   }
   table{ width:100%; border-collapse:collapse; font-size:13px; }
-  .ledger-table{ width:740px; table-layout:fixed; }
+  .ledger-table{ width:860px; table-layout:fixed; }
   thead th{
     text-align:left; font-weight:500; color:var(--ink-soft); font-size:11px;
     letter-spacing:0.08em; padding:8px 10px; border-bottom:1px solid var(--line); white-space:nowrap;
@@ -187,6 +187,7 @@
   td.store{ color:var(--ink-soft); max-width:120px; overflow:hidden; text-overflow:ellipsis; }
   td.pay{ color:var(--ink-faint); font-size:12px; max-width:120px; overflow:hidden; text-overflow:ellipsis; }
   td.memo{ color:var(--ink-soft); max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  td.notecell{ color:var(--ink-soft); max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   td.amt{ text-align:right; }
   td.amt .main{ font-weight:700; }
   td.amt .main.income{ color:var(--gold); }
@@ -378,12 +379,12 @@
           <colgroup>
             <col style="width:56px"><col style="width:84px"><col style="width:104px">
             <col style="width:104px"><col style="width:132px"><col style="width:108px">
-            <col style="width:96px"><col style="width:56px">
+            <col style="width:96px"><col style="width:120px"><col style="width:56px">
           </colgroup>
           <thead>
             <tr>
               <th>日付</th><th>項目</th><th>店名</th><th>支払 / 口座</th><th>摘要</th>
-              <th style="text-align:right;">金額</th><th style="text-align:right;">残高</th><th></th>
+              <th style="text-align:right;">金額</th><th style="text-align:right;">残高</th><th>メモ</th><th></th>
             </tr>
           </thead>
         </table>
@@ -393,7 +394,7 @@
           <colgroup>
             <col style="width:56px"><col style="width:84px"><col style="width:104px">
             <col style="width:104px"><col style="width:132px"><col style="width:108px">
-            <col style="width:96px"><col style="width:56px">
+            <col style="width:96px"><col style="width:120px"><col style="width:56px">
           </colgroup>
           <tbody id="entryBody"></tbody>
         </table>
@@ -727,6 +728,7 @@
           <td class="memo">${escapeHtml(e.memo || '')}</td>
           <td class="amt"><div class="main ${cls}">${sign}${fmtBase(e.amountBase)}</div>${subLine}</td>
           <td class="bal">${fmtBase(e.runningBalance)}</td>
+          <td class="notecell">${escapeHtml(e.note || '')}</td>
           <td class="ops">
             <button class="icon-btn edit" data-id="${e.id}" title="編集する">✎</button>
             ${canMove ? `<button class="icon-btn move" data-id="${e.id}" title="ほかの人に移動">⇄</button>` : ''}
