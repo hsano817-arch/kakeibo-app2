@@ -15,6 +15,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;500;600;800&family=Zen+Kaku+Gothic+New:wght@400;500;700;900&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <style>
   :root{
     --paper: #efeadf;
@@ -252,11 +254,11 @@
   .field.row2{ display:flex; gap:10px; }
   .field.row2 > div{ flex:1; }
   .field label{ display:block; font-size:11px; color:var(--ink-soft); letter-spacing:0.1em; margin-bottom:5px; }
-  .field input, .field select{
+  .field input, .field select, .field textarea{
     width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:5px; background:#fff;
     font-family:'Zen Kaku Gothic New', sans-serif; font-size:14px; color:var(--ink);
   }
-  .field input:focus, .field select:focus{ outline:2px solid var(--gold-soft); outline-offset:0; }
+  .field input:focus, .field select:focus, .field textarea:focus{ outline:2px solid var(--gold-soft); outline-offset:0; }
   .rate-note{ font-size:11px; color:var(--ink-faint); margin-top:4px; }
   .modal-actions{ display:flex; gap:10px; margin-top:18px; }
   .modal-actions button{
@@ -503,6 +505,24 @@
       <input type="file" id="importFile" accept=".xlsx,.xls" style="display:none;">
     </div>
 
+    <div class="io-section" id="syncSection">
+      <div class="shelf-title" style="margin-bottom:8px;">2台のスマホで自動同期</div>
+      <div class="io-note" id="syncStatus" style="margin-bottom:10px;">同期は設定されていません。</div>
+      <div class="field">
+        <label for="syncConfigInput">Firebaseの接続情報（firebaseConfigをそのまま貼り付け）</label>
+        <textarea id="syncConfigInput" rows="5" placeholder='const firebaseConfig = { apiKey: "...", databaseURL: "...", ... }; の中身、または{ }の部分をそのまま貼り付けてください' style="width:100%; font-family:monospace; font-size:12px; padding:9px 10px; border:1px solid var(--line); border-radius:5px;"></textarea>
+      </div>
+      <div class="field">
+        <label for="syncPassphrase">2人共通の合言葉</label>
+        <input type="text" id="syncPassphrase" placeholder="例：まさことひろき2026（他人に推測されにくいもの）">
+      </div>
+      <div class="io-buttons">
+        <button class="io-btn" id="syncEnableBtn">🔗 同期を有効にする</button>
+        <button class="io-btn" id="syncDisableBtn">同期をやめる</button>
+      </div>
+      <div class="io-note">合言葉を知っていれば誰でも読み書きできる簡易的な仕組みです。銀行のような厳重さはないので、他人に推測されにくい合言葉にしてください。2台とも同じ接続情報・同じ合言葉を設定すると、記録と項目が自動で同期されます。</div>
+    </div>
+
     <div class="modal-actions">
       <button class="btn-cancel" id="closeSettings2">閉じる</button>
     </div>
@@ -516,6 +536,7 @@
   const ENTRIES_KEY = 'entries';
   const SETTINGS_KEY = 'settings';
   const ACTIVE_PROFILE_KEY = 'activeProfile';
+  const SYNC_CONFIG_KEY = 'syncConfig';
   const BASE_CODE = 'TWD';
   const OTHER_VALUE = '__other__';
 
@@ -544,6 +565,10 @@
   let editingId = null; // null = new entry
   let activeSettingsTab = 'paneExpense';
   let currentProfile = null;
+  let syncEnabled = false;
+  let syncDb = null;
+  let syncRoomId = null;
+  let applyingRemoteUpdate = false;
 
   const fmt = (symbol, n) => symbol + Math.round(n).toLocaleString('ja-JP');
   const baseSymbol = () => (settings.currencies.find(c=>c.code===BASE_CODE) || {symbol:'NT$'}).symbol;
@@ -627,9 +652,11 @@
 
   async function saveEntries(){
     lsSet(ENTRIES_KEY, JSON.stringify(entries));
+    pushEntriesToCloud();
   }
   async function saveSettings(){
     lsSet(SETTINGS_KEY, JSON.stringify(settings));
+    pushSettingsToCloud();
   }
   async function saveActiveProfile(){
     lsSet(ACTIVE_PROFILE_KEY, currentProfile);
@@ -1186,7 +1213,189 @@
     renderCurrencyList();
   }
 
-  // ---------- Excel export / import ----------
+  // ---------- Cloud sync (Firebase Realtime Database) ----------
+  function hashPassphrase(str){
+    // cyrb53-style string hash -> deterministic hex id, safe for a Firebase path segment
+    let h1 = 0xdeadbeef ^ str.length, h2 = 0x41c6ce57 ^ str.length;
+    for(let i=0;i<str.length;i++){
+      const ch = str.charCodeAt(i);
+      h1 = Math.imul(h1 ^ ch, 2654435761);
+      h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1>>>16), 2246822507) ^ Math.imul(h2 ^ (h2>>>13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2>>>16), 2246822507) ^ Math.imul(h1 ^ (h1>>>13), 3266489909);
+    return (4294967296*(2097151 & h2)+(h1>>>0)).toString(16);
+  }
+
+  function parseFirebaseConfig(text){
+    const match = text.match(/\{[\s\S]*\}/);
+    if(!match) throw new Error('{ } で囲まれた設定が見つかりませんでした');
+    const objText = match[0];
+    try{ return JSON.parse(objText); }
+    catch(e){
+      try{ return Function('"use strict"; return (' + objText + ')')(); }
+      catch(e2){ throw new Error('設定の形式を読み取れませんでした'); }
+    }
+  }
+
+  function setSyncStatus(msg, isError){
+    const el = document.getElementById('syncStatus');
+    if(!el) return;
+    el.textContent = msg;
+    el.style.color = isError ? 'var(--hanko)' : 'var(--gold)';
+  }
+
+  function nowLabel(){
+    const d = new Date();
+    return `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日 ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+  }
+
+  function syncPath(sub){ return 'kakeibo-sync/' + syncRoomId + '/' + sub; }
+
+  function pushEntriesToCloud(){
+    if(!syncEnabled || !syncDb || applyingRemoteUpdate) return;
+    const obj = {};
+    entries.forEach(e => { obj[String(e.id)] = e; });
+    syncDb.ref(syncPath('entries')).set(obj).catch(e => setSyncStatus('同期に失敗しました：'+e.message, true));
+  }
+  function pushSettingsToCloud(){
+    if(!syncEnabled || !syncDb || applyingRemoteUpdate) return;
+    syncDb.ref(syncPath('settings')).set(settings).catch(e => setSyncStatus('同期に失敗しました：'+e.message, true));
+  }
+
+  function attachCloudListeners(){
+    syncDb.ref(syncPath('entries')).on('value', async (snap) => {
+      applyingRemoteUpdate = true;
+      const val = snap.val() || {};
+      entries = Object.keys(val).map(k => val[k]);
+      await saveEntries();
+      renderAll();
+      applyingRemoteUpdate = false;
+      setSyncStatus('同期中（最終更新：' + nowLabel() + '）', false);
+    }, (err) => setSyncStatus('同期エラー：'+err.message, true));
+
+    syncDb.ref(syncPath('settings')).on('value', async (snap) => {
+      const val = snap.val();
+      if(val){
+        applyingRemoteUpdate = true;
+        settings = val;
+        await saveSettings();
+        renderAll();
+        renderSettingsPanes();
+        applyingRemoteUpdate = false;
+        setSyncStatus('同期中（最終更新：' + nowLabel() + '）', false);
+      }
+    }, (err) => setSyncStatus('同期エラー：'+err.message, true));
+  }
+
+  function detachCloudListeners(){
+    if(syncDb && syncRoomId){
+      syncDb.ref(syncPath('entries')).off();
+      syncDb.ref(syncPath('settings')).off();
+    }
+  }
+
+  async function saveSyncConfig(cfgObj){
+    lsSet(SYNC_CONFIG_KEY, JSON.stringify(cfgObj));
+  }
+  async function loadSyncConfig(){
+    try{
+      const raw = lsGet(SYNC_CONFIG_KEY);
+      return raw ? JSON.parse(raw) : null;
+    }catch(e){ return null; }
+  }
+  async function clearSyncConfig(){
+    lsSet(SYNC_CONFIG_KEY, '');
+  }
+
+  function connectFirebase(cfg){
+    if(typeof firebase === 'undefined'){
+      setSyncStatus('Firebaseライブラリの読み込みに失敗しました。通信環境を確認してください。', true);
+      return false;
+    }
+    try{
+      if(firebase.apps && firebase.apps.length){ firebase.apps.forEach(a => a.delete()); }
+      firebase.initializeApp(cfg);
+      syncDb = firebase.database();
+      return true;
+    }catch(e){
+      setSyncStatus('Firebaseへの接続に失敗しました：' + e.message, true);
+      return false;
+    }
+  }
+
+  async function enableSync(fromSavedConfig){
+    const configText = document.getElementById('syncConfigInput').value;
+    const passphrase = document.getElementById('syncPassphrase').value.trim();
+    if(!configText.trim() || !passphrase){
+      setSyncStatus('接続情報と合言葉の両方を入力してください。', true);
+      return;
+    }
+    let cfg;
+    try{ cfg = parseFirebaseConfig(configText); }
+    catch(e){ setSyncStatus('接続情報を読み取れませんでした。'+e.message, true); return; }
+    if(!cfg.databaseURL){
+      setSyncStatus('この接続情報にはdatabaseURLが含まれていません。Realtime Databaseを作成してから、Webアプリの設定を貼り付けてください。', true);
+      return;
+    }
+
+    if(!connectFirebase(cfg)) return;
+    syncRoomId = hashPassphrase(passphrase);
+    syncEnabled = true;
+
+    setSyncStatus('接続を確認しています…', false);
+    try{
+      const snap = await syncDb.ref(syncPath('entries')).get();
+      if(snap.exists()){
+        applyingRemoteUpdate = true;
+        const val = snap.val() || {};
+        entries = Object.keys(val).map(k => val[k]);
+        await saveEntries();
+        const snapS = await syncDb.ref(syncPath('settings')).get();
+        if(snapS.exists()){ settings = snapS.val(); await saveSettings(); }
+        applyingRemoteUpdate = false;
+        renderAll();
+        renderSettingsPanes();
+      } else {
+        pushEntriesToCloud();
+        pushSettingsToCloud();
+      }
+    }catch(e){
+      syncEnabled = false;
+      setSyncStatus('クラウドの確認に失敗しました：' + e.message, true);
+      return;
+    }
+
+    attachCloudListeners();
+    await saveSyncConfig({ config: cfg, passphrase, roomId: syncRoomId });
+    setSyncStatus('同期が有効になりました（最終更新：' + nowLabel() + '）', false);
+  }
+
+  async function disableSync(){
+    detachCloudListeners();
+    syncEnabled = false;
+    syncDb = null;
+    syncRoomId = null;
+    await clearSyncConfig();
+    setSyncStatus('同期は設定されていません。', false);
+  }
+
+  async function initSyncFromSavedConfig(){
+    const saved = await loadSyncConfig();
+    if(!saved || !saved.config || !saved.passphrase) return;
+    document.getElementById('syncConfigInput').value = JSON.stringify(saved.config, null, 2);
+    document.getElementById('syncPassphrase').value = saved.passphrase;
+    if(!connectFirebase(saved.config)) return;
+    syncRoomId = saved.roomId || hashPassphrase(saved.passphrase);
+    syncEnabled = true;
+    attachCloudListeners();
+    setSyncStatus('同期中です（最終更新：' + nowLabel() + '）', false);
+  }
+
+  document.getElementById('syncEnableBtn').addEventListener('click', enableSync);
+  document.getElementById('syncDisableBtn').addEventListener('click', disableSync);
+
+
   function inferTypeFromCategory(category){
     if(settings.categories.income.includes(category)) return 'income';
     if(settings.categories.expense.includes(category)) return 'expense';
@@ -1428,6 +1637,7 @@
     await loadData();
     currentMonth = monthKey(todayStr());
     renderAll();
+    initSyncFromSavedConfig();
   })();
 
   if('serviceWorker' in navigator){

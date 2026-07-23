@@ -1,6 +1,6 @@
 // v2: ネットワーク優先。オンライン時は常に最新のファイルを取得し、
 // 通信できない時だけキャッシュ（前回開いた時の内容）を使う。
-const CACHE_NAME = 'kakeibo-cache-v6';
+const CACHE_NAME = 'kakeibo-cache-v7';
 const ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (event) => {
